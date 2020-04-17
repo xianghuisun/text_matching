@@ -4,51 +4,96 @@ import pandas as pd
 import random
 import pickle
 
-def load_data(data_path):
-	with open(data_path) as f:
-		lines=f.readlines()
-	print(len(lines))
-	sentence_pairs=[]
-	label_list=[]
-	for line in lines:
-		line_split=line.strip().split("\t")
-		sentence1=[number for number in line_split[0].strip().split()]
-		sentence2=[number for number in line_split[1].strip().split()]
-		sentence_pairs.append((sentence1,sentence2))
-		if len(line_split)==3:
-			label_list.append(int(line_split[-1]))
-	if len(line_split)==3:
-		return sentence_pairs,label_list
-	else:
-		return sentence_pairs
+# def load_data(data_path):
+# 	with open(data_path) as f:
+# 		lines=f.readlines()
+# 	print(len(lines))
+# 	sentence_pairs=[]
+# 	label_list=[]
+# 	for line in lines:
+# 		line_split=line.strip().split("\t")
+# 		sentence1=[number for number in line_split[0].strip().split()]
+# 		sentence2=[number for number in line_split[1].strip().split()]
+# 		sentence_pairs.append((sentence1,sentence2))
+# 		if len(line_split)==3:
+# 			label_list.append(int(line_split[-1]))
+# 	if len(line_split)==3:
+# 		return sentence_pairs,label_list
+# 	else:
+# 		return sentence_pairs
+
+def process_sentence(sentences):
+    import re
+    sentences=re.sub("([?<>,.!@#$%&*;:])",repl=" ",string=sentences)
+    sentences=re.sub("[' ']+",repl=' ',string=sentences)
+    return sentences.strip().split()
+
+def load_data(data_path="../quora_duplicate_questions.tsv",need_process=True):
+    with open(data_path) as f:
+        lines=f.readlines()
+    sentence_pairs=[]
+    label_list=[]
+    i=0
+    for line in lines[1:]:
+        line_split=line.strip().split("\t")
+        try:
+            assert len(line_split)==6
+        except:
+            #print(line_split)
+            i+=1
+            continue
+        label=line_split[-1]
+        if need_process:
+            seq_1=process_sentence(line_split[-2])
+            seq_2=process_sentence(line_split[-3])
+        else:
+            seq_1=line_split[-2].strip().split()
+            seq_2=line_split[-3].strip().split()
+
+        sentence_pairs.append((seq_1,seq_2))
+        label_list.append(label)
+    print(i)
+    return sentence_pairs,label_list
 
 
-def get_parameter(train_sentence_pairs,word2vec_model):
+def get_parameter(train_sentence_pairs,word2vec_model=None,embed_dim=300):
 	word2id={}
-
-	all_words=set()
+	all_words=[]
 	for sen_pairs in train_sentence_pairs:
 		sen1,sen2=sen_pairs
 		for word in sen1:
-			all_words.add(word)
+			all_words.append(word)
 		for word in sen2:
-			all_words.add(word)
-	all_words=list(all_words)
-	print("There are %d unique words in train sen_pairs"%len(all_words))
-	words_in_word2vec=list(word2vec_model.wv.vocab.keys())
-	print("There are %d unique words in word2vec model " %len(words_in_word2vec))
-	embedding_matrix=[]
-	for i,word in enumerate(words_in_word2vec):
-		if i==0:
-			word2id["--UNK--"]=len(word2id)
-			embedding_matrix.append(np.random.uniform(-0.5,0.5,word2vec_model.vector_size))
-			word2id["--PAD--"]=len(word2id)
-			embedding_matrix.append(np.zeros(word2vec_model.vector_size))
-		if word in all_words:
-			word2id[word]=len(word2id)
-			embedding_matrix.append(word2vec_model[word])
+			all_words.append(word)
+	import collections
+	counter=collections.Counter(all_words)
+	sorted_words=sorted(counter.items(),key=lambda x:x[1],reverse=True)
+	words_list=[]
+	for word,freq in sorted_words:
+		words_list.append(word)
 
-	embedding_matrix=np.array(embedding_matrix)
+	print("There are %d unique words in train sen_pairs"%len(words_list))
+	if word2vec_model!=None:
+		words_in_word2vec=list(word2vec_model.wv.vocab.keys())
+		print("There are %d unique words in word2vec model " %len(words_in_word2vec))
+		embedding_matrix=[]
+		for i,word in enumerate(words_in_word2vec):
+			if i==0:
+				word2id["--UNK--"]=len(word2id)
+				embedding_matrix.append(np.random.uniform(-0.5,0.5,word2vec_model.vector_size))
+				word2id["--PAD--"]=len(word2id)
+				embedding_matrix.append(np.zeros(word2vec_model.vector_size))
+			if word in words_list:
+				word2id[word]=len(word2id)
+				embedding_matrix.append(word2vec_model[word])
+
+		embedding_matrix=np.array(embedding_matrix)
+	else:
+		word2id["--UNK--"]=len(word2id)
+		word2id["--PAD--"]=len(word2id)
+		for word in words_list:
+			word2id[word]=len(word2id)
+		embedding_matrix=np.random.randn(len(word2id),embed_dim)
 	return word2id,embedding_matrix
 
 class Dataset:
