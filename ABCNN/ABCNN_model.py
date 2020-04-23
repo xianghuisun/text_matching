@@ -17,6 +17,8 @@ class Model:
 		with tf.variable_scope("placeholder",reuse=tf.AUTO_REUSE):
 			self.premise=tf.placeholder(shape=[None,self.seq_length_p],dtype=tf.int32)
 			self.hypothesis=tf.placeholder(shape=[None,self.seq_length_h],dtype=tf.int32)
+			self.premise_length=tf.placeholder(shape=[None],dtype=tf.int32)
+			self.hypothesis_length=tf.placeholder(shape=[None],dtype=tf.int32)
 			self.y=tf.placeholder(shape=[None],dtype=tf.int32)
 
 
@@ -171,6 +173,11 @@ class Model:
 		grads,_=tf.clip_by_global_norm(tf.gradients(self.loss,t_vars),5)
 		optimizer=tf.train.AdamOptimizer(0.001)
 		self.train_op=optimizer.apply_gradients(zip(grads,t_vars))
+
+
+	def forward(self):
+		self.add_embedding()
+		#(batch_size,seq_length,1)
 
 
 
