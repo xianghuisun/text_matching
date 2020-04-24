@@ -43,12 +43,18 @@ class Model:
         cell_fw=tf.nn.rnn_cell.LSTMCell(num_units=dim)
         cell_bw=tf.nn.rnn_cell.LSTMCell(num_units=dim)
         return tf.nn.bidirectional_dynamic_rnn(cell_fw,cell_bw,inputs=x,sequence_length=x_length,dtype=tf.float32)
+    def autoencoder_layer(self,x):
+        out_dim=int(x.shape[-1])
+        layer1_out=tf.layers.dense(x,units=200,activation=tf.nn.relu)
+        output=tf.layers.dense(layer1_out,units=out_dim,activation=tf.nn.tanh)
+        return layer1_out,tf.reduce_mean(tf.square(output-x))
     
     def forward(self):
         p_embed=self.embedding_layer(self.premise)
         h_embed=self.embedding_layer(self.hypothesis)
         p_new=self.dropout_op(p_embed)
         h_new=self.dropout_op(h_embed)
+        self.autoencoder_loss=0.0
         for i in range(5):
             p_old=p_new
             h_old=h_new
@@ -64,8 +70,9 @@ class Model:
             p_new=tf.concat(values=[p_old,p,p_attention],axis=-1)
             h_new=tf.concat(values=[h_old,h,h_attention],axis=-1)
             if i==2 or i==4:
-                p_new=tf.layers.dense(p_new,units=200,activation=tf.nn.sigmoid)
-                h_new=tf.layers.dense(h_new,units=200,activation=tf.nn.sigmoid)
+                p_new,auto_loss_p=self.autoencoder_layer(p_new)
+                h_new,auto_loss_h=self.autoencoder_layer(h_new)
+                self.autoencoder_loss=self.autoencoder_loss+auto_loss_p+auto_loss_h
                 
         p_pooling=tf.reduce_max(p_new,axis=1)
         h_pooling=tf.reduce_max(h_new,axis=1)
@@ -79,7 +86,7 @@ class Model:
     def train(self):
         labels=tf.one_hot(self.y,self.num_classes)
         loss=tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits,labels=labels)
-        self.loss=tf.reduce_mean(loss)
+        self.loss=tf.reduce_mean(loss)+self.autoencoder_loss
         optimizer=tf.train.AdamOptimizer(0.001)
         grads=tf.gradients(self.loss,tf.trainable_variables())
         grads,_=tf.clip_by_global_norm(grads,5.0)

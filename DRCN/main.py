@@ -58,6 +58,9 @@ class Args:
         #self.max_seq_len=25
 args=Args(vocab_size=vocab_size)
 model=Model(args,embedding_matrix=embedding_matrix)
+config=tf.ConfigProto()
+config.gpu_options.allow_growth=True
+config.gpu_options.per_process_gpu_memory_fraction=0.8
 
 def evaluate(sess):
     num_batches=valid_dataset.sample_nums//args.batch_size
@@ -95,7 +98,7 @@ def test(sess):
 def train():
     num_batches=dataset.sample_nums//args.batch_size
     saved_acc=0.0
-    with tf.Session() as sess:
+    with tf.Session(config=config) as sess:
         sess.run(tf.global_variables_initializer())
         saver=tf.train.Saver(max_to_keep=3)
         for epoch in range(args.epochs):
