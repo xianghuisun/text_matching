@@ -1,11 +1,12 @@
 import tensorflow as tf
 
 class Model:
-	def __init__(self,embed_dim,embed_size,num_classes,seq_length_p,seq_length_h,filter_width=3):
+	def __init__(self,embedding_matrix,num_classes,seq_length_p,seq_length_h,filter_width=3):
 		self.seq_length_h=seq_length_h
 		self.seq_length_p=seq_length_p
-		self.embed_dim=embed_dim
-		self.embed_size=embed_size
+		self.embed_dim=embedding_matrix.shape[1]
+		self.embed_size=embedding_matrix.shape[0]
+		self.embedding_matrix=tf.Variable(embedding_matrix,dtype=tf.float32)
 		self.num_classes=num_classes
 		self.filter_width=filter_width
 		self.conv_filters=50
@@ -17,14 +18,19 @@ class Model:
 		with tf.variable_scope("placeholder",reuse=tf.AUTO_REUSE):
 			self.premise=tf.placeholder(shape=[None,self.seq_length_p],dtype=tf.int32)
 			self.hypothesis=tf.placeholder(shape=[None,self.seq_length_h],dtype=tf.int32)
+			self.premise_length=tf.placeholder(shape=[None],dtype=tf.int32)
+			self.hypothesis_length=tf.placeholder(shape=[None],dtype=tf.int32)
 			self.y=tf.placeholder(shape=[None],dtype=tf.int32)
+			self.keep_prob=tf.placeholder(dtype=tf.float32,shape=[])
+			self.p_mask=tf.cast(tf.sequence_mask(self.premise_length,maxlen=self.seq_length_p),dtype=tf.float32)
+			self.h_mask=tf.cast(tf.sequence_mask(self.hypothesis_length,maxlen=self.seq_length_h),dtype=tf.float32)
 
 
 	def add_embedding(self):
 		self.add_placeholder()
 		with tf.variable_scope("embedding",reuse=tf.AUTO_REUSE):
-			self.embedding_matrix=tf.get_variable("embeddings",shape=[self.embed_size,self.embed_dim],
-				initializer=tf.random_uniform_initializer(-1.0,1.0))
+			# self.embedding_matrix=tf.get_variable("embeddings",shape=[self.embed_size,self.embed_dim],
+			# 	initializer=tf.random_uniform_initializer(-1.0,1.0))
 			self.p_embed=tf.nn.embedding_lookup(params=self.embedding_matrix,ids=self.premise)
 			self.h_embed=tf.nn.embedding_lookup(params=self.embedding_matrix,ids=self.hypothesis)
 			#(batch_size,sq_length,embedding_dim)
@@ -32,7 +38,7 @@ class Model:
 			self.h_embed=tf.expand_dims(tf.transpose(self.h_embed,perm=[0,2,1]),axis=-1)
 			#(batch_size,embed_dim,seq_length,1)
 
-	def get_attention(self,p_tensor,h_tensor):
+	def get_attention(self,p_tensor,h_tensor,epsilon=1e-4):
 		'''
 		A的第i行意味着句子premise的第i个单词对句子hypothesis注意力分布
 		A的第j列意味着句子hypothesis的第j个单词对句子premise的注意力分布
@@ -40,18 +46,25 @@ class Model:
 		在列的方向上Ａ可以被视为是hypothesis的新的特征，因为A的每一列是句子hypothesis的一个单词的新的特征向量
 		'''
 		#euclidean=tf.sqrt(tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,perm=[0,1,3,2])),axis=1))
-		euclidean=tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,perm=[0,1,3,2])),axis=1)
+		#euclidean=tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,perm=[0,1,3,2])),axis=1)
+		euclidean=tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,
+			perm=[0,1,3,2])),axis=1),epsilon))
 		#(batch_size,seq_length_p,seq_length_h)
 		return 1/(1.0+euclidean)
 
 	def add_abcnn2(self,p_tensor,h_tensor):
 		#(batch_size,features,seq_length_P+2,1)
 		#(batch_size,features,seq_length_h+2,1)
+		p_tensor*=tf.expand_dims(tf.expand_dims(tf.pad(self.p_mask,[[0,0],[1,1]]),
+			axis=1),axis=-1)
+		h_tensor*=tf.expand_dims(tf.expand_dims(tf.pad(self.h_mask,[[0,0],[1,1]]),
+			axis=1),axis=-1)
+
 		A=self.get_attention(p_tensor,h_tensor)#(batch_size,p+2,h+2)
 		p_attention=tf.reduce_sum(A,axis=2)#(batch_size,p+2)
 		h_attention=tf.reduce_sum(A,axis=1)#(batch_size,h+2)
-		assert p_attention.shape[1]==p_tensor.shape[2]
-		assert h_attention.shape[1]==h_tensor.shape[2]
+		# assert p_attention.shape[1]==p_tensor.shape[2]
+		# assert h_attention.shape[1]==h_tensor.shape[2]
 		p_attention=tf.expand_dims(tf.expand_dims(p_attention,axis=1),axis=-1)
 		h_attention=tf.expand_dims(tf.expand_dims(h_attention,axis=1),axis=-1)
 		#(batch_size,1,sep_length+2,1)
@@ -69,14 +82,13 @@ class Model:
 		h_result=tf.concat(h_pools,axis=2)
 		return p_result,h_result
 
-
-
-
-
 	def add_abcnn1(self,p_tensor,h_tensor):
 		#(batch_size,features,seq_length,1)
 		features=p_tensor.shape[1]
 		assert features==h_tensor.shape[1]
+		p_tensor*=tf.expand_dims(tf.expand_dims(self.p_mask,axis=1),axis=-1)
+		h_tensor*=tf.expand_dims(tf.expand_dims(self.h_mask,axis=1),axis=-1)
+
 		A=self.get_attention(p_tensor,h_tensor)#(batch_size,seq_length_p,seq_length_h)
 		seq_len=A.shape[-1]
 		with tf.variable_scope("abcnn1",reuse=tf.AUTO_REUSE):
@@ -117,8 +129,9 @@ class Model:
 
 	def forward(self):
 		self.add_embedding()
-		p_tensor=self.p_embed
-		h_tensor=self.h_embed
+		p_tensor=tf.nn.dropout(self.p_embed,keep_prob=self.keep_prob)
+		h_tensor=tf.nn.dropout(self.h_embed,keep_prob=self.keep_prob)
+
 		assert p_tensor.shape[-1]==h_tensor.shape[-1]==1
 		if self.abcnn1:
 			p_tensor,h_tensor=self.add_abcnn1(p_tensor,h_tensor)
@@ -128,8 +141,8 @@ class Model:
 			p_conv=self.wide_convolution(p_tensor)
 			h_conv=self.wide_convolution(h_tensor)
 		assert p_conv.shape[-1]==h_conv.shape[-1]==1
-		p_conv=tf.layers.batch_normalization(p_conv)
-		h_conv=tf.layers.batch_normalization(h_conv)
+		# p_conv=tf.layers.batch_normalization(p_conv)
+		# h_conv=tf.layers.batch_normalization(h_conv)
 		#(batch_size,features,seq_length+2,1)
 		if self.abcnn2:
 			p_conv,h_conv=self.add_abcnn2(p_conv,h_conv)
@@ -151,8 +164,8 @@ class Model:
 
 		#(batch_size,features)
 		fc_input=tf.concat([all_ap_p,all_ap_h],axis=-1)
-		fc_input=tf.nn.dropout(fc_input,keep_prob=0.5)
-		self.fc_out=tf.layers.dense(fc_input,units=64,activation=tf.nn.tanh)
+		fc_input=tf.nn.dropout(fc_input,keep_prob=self.keep_prob)
+		self.fc_out=tf.layers.dense(fc_input,units=256,activation=tf.nn.tanh)
 		self.train()
 		
 	def train(self):
@@ -169,7 +182,7 @@ class Model:
 
 		t_vars=tf.trainable_variables()
 		grads,_=tf.clip_by_global_norm(tf.gradients(self.loss,t_vars),5)
-		optimizer=tf.train.AdamOptimizer(0.001)
+		optimizer=tf.train.AdamOptimizer(0.005)
 		self.train_op=optimizer.apply_gradients(zip(grads,t_vars))
 
 

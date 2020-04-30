@@ -24,7 +24,7 @@ import pickle
 
 def process_sentence(sentences):
     import re
-    sentences=re.sub("([?<>,.!@#$%&*;:])",repl=" ",string=sentences)
+    sentences=re.sub("([?<>,.!@#$%&*;:])",repl=r" \1 ",string=sentences)
     sentences=re.sub("[' ']+",repl=' ',string=sentences)
     return sentences.strip().split()
 
@@ -100,14 +100,14 @@ class Dataset:
 	def __init__(self,sentence_pairs,word2id,mode="train",label_list=None):
 		self.sentence_pairs=sentence_pairs
 		self.mode=mode
-		if self.mode=="train":
+		if self.mode=="train" or self.mode=="valid":
 			self.label_list=np.array(label_list)
 		self.sample_nums=len(self.sentence_pairs)
 		self.indicator=0
 		self.word2id=word2id
 		self.vocab_size=len(self.word2id)
 		self.PAD_ID=word2id["--PAD--"]
-		self.max_seq_length=30
+		self.max_seq_length=25
 		self.sentences_pairs_to_id()
 
 	def sentences_pairs_to_id(self):
@@ -160,6 +160,7 @@ class Dataset:
 		self.sentence1=np.array(self.sentence1)[shuffle_index]
 		self.sentence2=np.array(self.sentence2)[shuffle_index]
 		self.label_list=self.label_list[shuffle_index]
+		print("Has shuffled the datasets once!")
 
 	def next_batch(self,batch_size):
 		end_indicator=self.indicator+batch_size
@@ -171,10 +172,10 @@ class Dataset:
 		batch_sentence1=self.sentence1[self.indicator:end_indicator]
 		batch_sentence2=self.sentence2[self.indicator:end_indicator]
 		batches_data=self.pad_sentence_pairs(batch_sentence1,batch_sentence2)
-		if self.mode=="train":
+		if self.mode=="train" or self.mode=="valid":
 			batch_label_list=self.label_list[self.indicator:end_indicator]
 		self.indicator+=batch_size
-		if self.mode=="train":
+		if self.mode=="train" or self.mode=="valid":
 			return batches_data,batch_label_list
 		else:
 			return batches_data
