@@ -4,7 +4,7 @@ class Model:
 	def __init__(self,embedding_matrix,num_classes,seq_length_p,seq_length_h,filter_width=3):
 		self.seq_length_h=seq_length_h
 		self.seq_length_p=seq_length_p
-		self.embed_dim=embedding_matrix.shape[1]
+		self.embed_dim=int(embedding_matrix.shape[1])
 		self.embed_size=embedding_matrix.shape[0]
 		self.embedding_matrix=tf.Variable(embedding_matrix,dtype=tf.float32)
 		self.num_classes=num_classes
@@ -13,6 +13,14 @@ class Model:
 		self.abcnn1=True
 		self.abcnn2=True
 		self.layers=2
+		self.l=10
+
+		self.W1=tf.Variable(tf.random_normal(shape=[self.l,self.embed_dim],dtype=tf.float32),name="multi_W1")
+		self.W2=tf.Variable(tf.random_normal(shape=[self.l,self.conv_filters],dtype=tf.float32),name="multi_W2")
+		if self.layers==2:
+			self.W3=tf.Variable(tf.random_normal(shape=[self.l,self.conv_filters],dtype=tf.float32),name="multi_W3")
+			self.W4=tf.Variable(tf.random_normal(shape=[self.l,self.conv_filters],dtype=tf.float32),name="multi_W4")
+
 		self.forward()
 
 	def add_placeholder(self):
@@ -39,7 +47,7 @@ class Model:
 			self.h_embed=tf.expand_dims(tf.transpose(self.h_embed,perm=[0,2,1]),axis=-1)
 			#(batch_size,embed_dim,seq_length,1)
 
-	def get_attention(self,p_tensor,h_tensor,epsilon=1e-4):
+	def get_attention(self,p_tensor,h_tensor,W,epsilon=1e-4):
 		'''
 		A的第i行意味着句子premise的第i个单词对句子hypothesis注意力分布
 		A的第j列意味着句子hypothesis的第j个单词对句子premise的注意力分布
@@ -48,12 +56,23 @@ class Model:
 		'''
 		#euclidean=tf.sqrt(tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,perm=[0,1,3,2])),axis=1))
 		#euclidean=tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,perm=[0,1,3,2])),axis=1)
-		euclidean=tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,
-			perm=[0,1,3,2])),axis=1),epsilon))
-		#(batch_size,seq_length_p,seq_length_h)
-		return 1/(1.0+euclidean)
+		#p_tensor.shape==(batch_size,features,seq_length_p or seq_length_p+2 ,1)
+		#h_tensor.shape==(batch_size,features,seq_length_h or seq_length_h+2,1)
+		W=tf.transpose(W,perm=[1,0])#(features,l)
+		W=tf.expand_dims(tf.expand_dims(W,axis=0),axis=2)#(1,features,1,l)
+		p_tensor=tf.transpose(tf.multiply(W,p_tensor),
+			perm=[0,3,2,1])#p_tensor.shape==(batch_size,l,seq_length_p or seq_length_p+2 ,features)
+		h_tensor=tf.transpose(tf.multiply(W,h_tensor),
+			perm=[0,3,2,1])#h_tensor.shape==(batch_size,l,seq_length_h or seq_length_h+2 ,features)
+		assert p_tensor.shape[1]==h_tensor.shape[1]==self.l
+		attention_weights=tf.nn.softmax(tf.matmul(p_tensor,tf.transpose(h_tensor,perm=[0,1,3,2])))
+		#euclidean=tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(p_tensor-tf.transpose(h_tensor,
+		#	perm=[0,1,3,2])),axis=1),epsilon))
+		#(batch_size,l,seq_length_p,seq_length_h)
+		assert attention_weights.shape[1]==self.l
+		return attention_weights
 
-	def add_abcnn2(self,p_tensor,h_tensor):
+	def add_abcnn2(self,p_tensor,h_tensor,W):
 		#(batch_size,features,seq_length_P+2,1)
 		#(batch_size,features,seq_length_h+2,1)
 		p_tensor*=tf.expand_dims(tf.expand_dims(tf.pad(self.p_mask,[[0,0],[1,1]]),
@@ -61,50 +80,57 @@ class Model:
 		h_tensor*=tf.expand_dims(tf.expand_dims(tf.pad(self.h_mask,[[0,0],[1,1]]),
 			axis=1),axis=-1)
 
-		A=self.get_attention(p_tensor,h_tensor)#(batch_size,p+2,h+2)
-		p_attention=tf.reduce_sum(A,axis=2)#(batch_size,p+2)
-		h_attention=tf.reduce_sum(A,axis=1)#(batch_size,h+2)
+		A=self.get_attention(p_tensor,h_tensor,W)#(batch_size,l,p+2,h+2)
+		p_attention=tf.reduce_sum(A,axis=-1)#(batch_size,l,p+2)
+		h_attention=tf.reduce_sum(A,axis=-2)#(batch_size,l,h+2)
 		# assert p_attention.shape[1]==p_tensor.shape[2]
 		# assert h_attention.shape[1]==h_tensor.shape[2]
-		p_attention=tf.expand_dims(tf.expand_dims(p_attention,axis=1),axis=-1)
-		h_attention=tf.expand_dims(tf.expand_dims(h_attention,axis=1),axis=-1)
-		#(batch_size,1,sep_length+2,1)
+		p_attention=tf.expand_dims(p_attention,axis=-1)
+		h_attention=tf.expand_dims(h_attention,axis=-1)
+		#(batch_size,l,sep_length+2,1)
 		assert p_attention.shape[2]==p_tensor.shape[2]
 		assert h_attention.shape[2]==h_tensor.shape[2]
 		seq_length=p_tensor.shape[2]-self.filter_width+1
 		p_pools=[]
 		h_pools=[]
+		#p_attention.shape==(batch_size,l,seq_length+2,1),p_tensor.shape==(batch_size,features,seq_length+2,1)
+		p_attention=tf.transpose(p_attention,perm=[0,3,2,1])
+		h_attention=tf.transpose(h_attention,perm=[0,3,2,1])
+		assert p_attention.shape[-1]==h_attention.shape[-1]==self.l
 		for i in range(seq_length):
 			p_pools.append(tf.reduce_sum(p_attention[:,:,i:i+self.filter_width,:]*p_tensor[:,:,i:i+self.filter_width,:],
-				axis=2,keep_dims=True))#(batch_size,features,1,1)
+				axis=2,keep_dims=True))#(batch_size,features,1,l)
 			h_pools.append(tf.reduce_sum(h_attention[:,:,i:i+self.filter_width,:]*h_tensor[:,:,i:i+self.filter_width,:],
 				axis=2,keep_dims=True))
-		p_result=tf.concat(p_pools,axis=2)#(batch_size,features,seq_length,1)
+		p_result=tf.concat(p_pools,axis=2)#(batch_size,features,seq_length,l)
 		h_result=tf.concat(h_pools,axis=2)
 		return p_result,h_result
 
-	def add_abcnn1(self,p_tensor,h_tensor,scope):
+	def add_abcnn1(self,p_tensor,h_tensor,scope,W):
 		#(batch_size,features,seq_length,1)
-		features=p_tensor.shape[1]
+		features=int(p_tensor.shape[1])
 		assert features==h_tensor.shape[1]
 		p_tensor*=tf.expand_dims(tf.expand_dims(self.p_mask,axis=1),axis=-1)
 		h_tensor*=tf.expand_dims(tf.expand_dims(self.h_mask,axis=1),axis=-1)
 
-		A=self.get_attention(p_tensor,h_tensor)#(batch_size,seq_length_p,seq_length_h)
-		seq_len=A.shape[-1]
+		A=self.get_attention(p_tensor,h_tensor,W)#(batch_size,l,seq_length_p,seq_length_h)
+		seq_len_h=int(A.shape[-1])
+		seq_len_p=int(A.shape[-2])
+		A=tf.reshape(A,shape=[-1,seq_len_p,seq_len_h])#(batch_size*l,seq_len_p,seq_len_h)
 		with tf.variable_scope(scope+"_abcnn1",reuse=tf.AUTO_REUSE):
-			W=tf.get_variable(name="W",shape=[seq_len,features],initializer=tf.random_uniform_initializer(-1.0,1.0))
-			p_attention=tf.matrix_transpose(tf.einsum("ijk,kl->ijl",A,W))#(batch_size,seq_length_p,features)
-			h_attention=tf.matrix_transpose(tf.einsum("ijk,kl->ijl",tf.transpose(A,perm=[0,2,1]),W))
+			W=tf.get_variable(name="W",shape=[seq_len_p,features],initializer=tf.random_uniform_initializer(-1.0,1.0))
+			p_attention=tf.matrix_transpose(tf.einsum("ijk,kl->ijl",A,W))#(batch_size*l,seq_length_p,features)
+			h_attention=tf.matrix_transpose(tf.einsum("ijk,kl->ijl",tf.transpose(A,perm=[0,2,1]),W))#(batch_size*l,seq_length_h,features)
 
-		p_attention=tf.expand_dims(p_attention,axis=-1)
-		h_attention=tf.expand_dims(h_attention,axis=-1)
-		new_p=tf.concat([p_attention,p_tensor],axis=-1)
+
+		p_attention=tf.reshape(p_attention,shape=[-1,features,seq_len_p,self.l])
+		h_attention=tf.reshape(h_attention,shape=[-1,features,seq_len_h,self.l])
+		new_p=tf.concat([p_attention,p_tensor],axis=-1)#(batch_size,features,seq_length,l+1)
 		new_h=tf.concat([h_attention,h_tensor],axis=-1)
 		return new_p,new_h
 
 	def wide_convolution(self,input_tensor):
-		#(batch_size,features,seq_length,1 or 2)
+		#(batch_size,features,seq_length,l+1)
 		'''
 		tf.nn.conv2d(input,filter,strides,padding)
 		input a 4D tensor(NHWC),filter a 4D tensor
@@ -132,33 +158,35 @@ class Model:
 		seq_length_H=int(h_tensor.shape[2])
 		all_ap_p=tf.nn.avg_pool(p_tensor,ksize=[1,1,seq_length_P,1],strides=[1,1,1,1],padding="VALID")
 		all_ap_h=tf.nn.avg_pool(h_tensor,ksize=[1,1,seq_length_H,1],strides=[1,1,1,1],padding="VALID")
-		assert all_ap_h.shape[-2]==all_ap_h.shape[-1]==1
+		assert all_ap_p.shape[-1]==all_ap_h.shape[-1]==self.l
+		assert all_ap_p.shape[-2]==all_ap_h.shape[-2]==1
 		#(batch_size,features,1,1)
 		features=all_ap_h.shape[1]
 		assert features==all_ap_p.shape[1]
-		all_ap_p=tf.reshape(all_ap_p,shape=[-1,features])#(batch_size,features)
-		all_ap_h=tf.reshape(all_ap_h,shape=[-1,features])#(batch_size,features)
+		all_ap_p=tf.reshape(all_ap_p,shape=[-1,features*self.l])#(batch_size,features*l)
+		all_ap_h=tf.reshape(all_ap_h,shape=[-1,features*self.l])#(batch_size,features*l)
 		all_ap_poolings=tf.concat(values=[all_ap_p,all_ap_h],axis=-1)
 		return all_ap_poolings
 
 
-	def ABCNN3(self,p_tensor,h_tensor,scope):
-		assert p_tensor.shape[-1]==h_tensor.shape[-1]==1
+	def ABCNN3(self,p_tensor,h_tensor,scope,abcnn1_W,abcnn2_W):
+		#assert p_tensor.shape[-1]==h_tensor.shape[-1]==self.l
 		if self.abcnn1:
-			p_tensor,h_tensor=self.add_abcnn1(p_tensor,h_tensor,scope)
-			#(batch_size,features,seq_length,2)
-			assert p_tensor.shape[-1]==h_tensor.shape[-1]==2
+			p_tensor,h_tensor=self.add_abcnn1(p_tensor,h_tensor,scope,abcnn1_W)
+			#(batch_size,features,seq_length,l+1)
+			#assert p_tensor.shape[-1]==h_tensor.shape[-1]==self.l+1
 
 		with tf.variable_scope(scope+"_conv",reuse=tf.AUTO_REUSE):
 			p_conv=self.wide_convolution(p_tensor)
 			h_conv=self.wide_convolution(h_tensor)
+			#(batch_size,conv_filters,seq_length+2,1)
 		assert p_conv.shape[-1]==h_conv.shape[-1]==1
 		# p_conv=tf.layers.batch_normalization(p_conv)
 		# h_conv=tf.layers.batch_normalization(h_conv)
 		#(batch_size,features,seq_length+2,1)
 		if self.abcnn2:
-			p_conv,h_conv=self.add_abcnn2(p_conv,h_conv)
-			#(batch_size,features,seq_length,1)
+			p_conv,h_conv=self.add_abcnn2(p_conv,h_conv,abcnn2_W)
+			#(batch_size,features,seq_length,l)
 		else:
 			p_conv,h_conv=self.w_ap_layer(p_conv,h_conv)
 		return p_conv,h_conv
@@ -169,15 +197,15 @@ class Model:
 		#(batch_size,embed_dim,seq_length,1)
 		p_tensor=tf.nn.dropout(self.p_embed,keep_prob=self.keep_prob)
 		h_tensor=tf.nn.dropout(self.h_embed,keep_prob=self.keep_prob)
-		p_conv,h_conv=self.ABCNN3(p_tensor,h_tensor,scope="First")
-		all_ap_poolings=self.all_avg_pooling(p_conv,h_conv)
-		#(batch_size,features,seq_length,1)
+		p_conv,h_conv=self.ABCNN3(p_tensor,h_tensor,scope="First",abcnn1_W=self.W1,abcnn2_W=self.W2)
+		all_ap_poolings=self.all_avg_pooling(p_conv,h_conv)#(batch_size,2*conv_filters*self.l)
+		#(batch_size,features,seq_length,l)
 		if self.layers==2:
-			p_conv,h_conv=self.ABCNN3(p_conv,h_conv,scope="Second")
+			p_conv,h_conv=self.ABCNN3(p_conv,h_conv,scope="Second",abcnn1_W=self.W3,abcnn2_W=self.W4)
 			all_ap_poolings2=self.all_avg_pooling(p_conv,h_conv)
 			all_ap_poolings=tf.concat(values=[all_ap_poolings,all_ap_poolings2],axis=-1)#(batch_size,features*4)
-		#(batch_size,features,seq_length,1)
-		assert p_conv.shape[-1]==1==h_conv.shape[-1]
+		#(batch_size,features,seq_length,l)
+		assert p_conv.shape[-1]==self.l==h_conv.shape[-1]
 
 		#(batch_size,features)
 		fc_input=all_ap_poolings
