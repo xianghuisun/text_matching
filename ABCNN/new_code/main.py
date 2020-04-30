@@ -35,39 +35,47 @@ import pickle
 #         parameter=(word2id,embedding_matrix)
 #         pickle.dump(parameter,f)
 
+train_data_path="/home/aistudio/snli_1.0/snli_1.0_train.txt"
+test_data_path="/home/aistudio/snli_1.0/snli_1.0_test.txt"
+valid_data_path="/home/aistudio/snli_1.0/snli_1.0_dev.txt"
 
-sentence_pairs,label_list=load_data()
+train_sentence_pairs,train_label_list=load_data(train_data_path)
+valid_sentence_pairs,valid_label_list=load_data(valid_data_path)
+test_sentence_pairs,test_label_list=load_data(test_data_path)
 
-valid_samples=10000
-test_samples=10000
-train_samples=len(sentence_pairs)-test_samples-valid_samples#384000
 
-train_sentence_pairs=sentence_pairs[:train_samples]
-train_label_list=label_list[:train_samples]
+# valid_samples=10000
+# test_samples=10000
+# train_samples=len(sentence_pairs)-test_samples-valid_samples#384000
 
-valid_sentence_pairs=sentence_pairs[train_samples:train_samples+valid_samples]
-valid_label_list=label_list[train_samples:train_samples+valid_samples]
+# train_sentence_pairs=sentence_pairs[:train_samples]
+# train_label_list=label_list[:train_samples]
 
-test_sentence_pairs=sentence_pairs[-test_samples:]
-test_label_list=label_list[-test_samples:]
+# valid_sentence_pairs=sentence_pairs[train_samples:train_samples+valid_samples]
+# valid_label_list=label_list[train_samples:train_samples+valid_samples]
+
+# test_sentence_pairs=sentence_pairs[-test_samples:]
+# test_label_list=label_list[-test_samples:]
 print(len(train_sentence_pairs),len(valid_sentence_pairs),len(test_sentence_pairs))
 
 if os.path.exists("./parameter.pkl"):
     with open("./parameter.pkl","rb") as f:
-        word2id,embedding_matrix=pickle.load(f)
+        word2id,label2id,embedding_matrix=pickle.load(f)
 else:
-    word2id,embedding_matrix=get_parameter(train_sentence_pairs)
+    word2id,label2id,embedding_matrix=get_parameter(train_sentence_pairs,train_label_list)
     with open("./parameter.pkl","wb") as f: 
-        pickle.dump((word2id,embedding_matrix),f)
+        pickle.dump((word2id,label2id,embedding_matrix),f)
 
-train_dataset=Dataset(train_sentence_pairs,word2id,label_list=train_label_list)
-valid_dataset=Dataset(valid_sentence_pairs,word2id,mode="valid",label_list=valid_label_list)
-test_dataset=Dataset(test_sentence_pairs,word2id,mode="test")
-
+train_dataset=Dataset(train_sentence_pairs,word2id,label2id,label_list=train_label_list)
+valid_dataset=Dataset(valid_sentence_pairs,word2id,label2id,mode="valid",label_list=valid_label_list)
+test_dataset=Dataset(test_sentence_pairs,word2id,label2id,mode="test",label_list=test_label_list)
+test_label_list=test_dataset.label_list
 
 
 vocab_size=len(word2id)
 print("vocab size is ",vocab_size)
+print(label2id)
+
 
 # train_dataset=Dataset(sentence_pairs=train_sentence_pairs,word2id=word2id,mode="train",label_list=train_label_list)
 # test_train_dataset=Dataset(sentence_pairs=test_sentence_pairs,word2id=word2id,mode="test",label_list=None)
@@ -83,7 +91,7 @@ class Args:
         #self.filter_height=self.embedding_dim
         self.cnn1_filters=50
         self.cnn2_filters=50
-        self.num_classes=2
+        self.num_classes=len(label2id)
         self.learning_rate=0.005
         self.epochs=50
         self.batch_size=100
@@ -129,6 +137,9 @@ def evaluate(sess):
 
 def test(sess):
     num_batches=test_dataset.sample_nums//args.batch_size
+    rest_nums=test_dataset.sample_nums-(num_classes*args.batch_size)
+    print("Rest number is ",rest_nums)
+
     predict_list=[]
     for i in range(num_batches):
         batches_data=test_dataset.next_batch(args.batch_size)
@@ -138,11 +149,21 @@ def test(sess):
         predict=sess.run(model.prediction,feed_dict=feed_dict)
         for i in list(predict):
             predict_list.append(i)
+        if i==num_batches-1:
+            batches_data=test_dataset.next_batch(args.batch_size)
+            assert len(batches_data)==4
+            feed_dict={model.premise:batches_data[0],model.hypothesis:batches_data[1],
+                    model.premise_length:batches_data[2],model.hypothesis_length:batches_data[3],model.keep_prob:1.0}
+            predict=sess.run(model.prediction,feed_dict=feed_dict)
+            print("predict .shape ")
+            for i in list(predict):
+                predict_list.append(i)
 
     assert len(predict_list)==len(test_label_list)==test_dataset.sample_nums
     correct=0
     for i,j in zip(predict_list,test_label_list):
         j=int(j)
+        i=int(i)
         assert type(i)==int==type(j)
         if i==j:
             correct+=1
