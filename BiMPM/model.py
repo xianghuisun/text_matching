@@ -81,20 +81,21 @@ class Model:
         self.w6=tf.Variable(tf.random_normal(shape=[self.l,self.context_hidden_dim],dtype=tf.float32))
         self.w7=tf.Variable(tf.random_normal(shape=[self.l,self.context_hidden_dim],dtype=tf.float32))
         self.w8=tf.Variable(tf.random_normal(shape=[self.l,self.context_hidden_dim],dtype=tf.float32))
-        embedding_matrix=tf.Variable(embedding_matrix,dtype=tf.float32)
-        random_matrix=tf.Variable(tf.random_normal(shape=[args.embed_size,args.embed_dim],dtype=tf.float32))
-        self.embed_matrix=tf.concat([embedding_matrix,random_matrix],axis=-1)#(vocab_size,600)
+        # embedding_matrix=tf.Variable(embedding_matrix,dtype=tf.float32)
+        # random_matrix=tf.Variable(tf.random_normal(shape=[args.embed_size,args.embed_dim],dtype=tf.float32))
+        # self.embed_matrix=tf.concat([embedding_matrix,random_matrix],axis=-1)#(vocab_size,600)
+        self.embed_matrix=tf.Variable(embedding_matrix,dtype=tf.float32)
         self.add_placeholder()
         self.forward()
     def add_placeholder(self):
         args=self.args
-        self.premise = tf.placeholder(name='p', shape=(None, args.max_seq_len), dtype=tf.int32)
-        self.hypothesis = tf.placeholder(name='h', shape=(None, args.max_seq_len), dtype=tf.int32)
+        self.premise = tf.placeholder(name='p', shape=(None, None), dtype=tf.int32)
+        self.hypothesis = tf.placeholder(name='h', shape=(None, None), dtype=tf.int32)
         self.premise_length=tf.placeholder(shape=[None],dtype=tf.int32)
         self.hypothesis_length=tf.placeholder(shape=[None],dtype=tf.int32)
-        self.p_mask=tf.expand_dims(tf.cast(tf.sequence_mask(self.premise_length,maxlen=args.max_seq_len),
+        self.p_mask=tf.expand_dims(tf.cast(tf.sequence_mask(self.premise_length),
                                            dtype=tf.float32),axis=-1)
-        self.h_mask=tf.expand_dims(tf.cast(tf.sequence_mask(self.hypothesis_length,maxlen=args.max_seq_len),
+        self.h_mask=tf.expand_dims(tf.cast(tf.sequence_mask(self.hypothesis_length),
                                            dtype=tf.float32),axis=-1)
 
         self.y = tf.placeholder(name='y', shape=(None,), dtype=tf.int32)
