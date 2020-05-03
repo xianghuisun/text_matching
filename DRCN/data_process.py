@@ -4,29 +4,54 @@ import pandas as pd
 import random
 import pickle
 
-def load_data(data_path):
+# def load_data(data_path):
+# 	with open(data_path) as f:
+# 		lines=f.readlines()
+# 	print(len(lines))
+# 	sentence_pairs=[]
+# 	label_list=[]
+# 	for line in lines:
+# 		line_split=line.strip().split("\t")
+# 		sentence1=[number for number in line_split[0].strip().split()]
+# 		sentence2=[number for number in line_split[1].strip().split()]
+# 		sentence_pairs.append((sentence1,sentence2))
+# 		if len(line_split)==3:
+# 			label_list.append(line_split[-1])
+# 	if len(line_split)==3:
+# 		return sentence_pairs,label_list
+# 	else:
+# 		return sentence_pairs
+
+def process_sentence(sentences):
+    import re
+    sentences=re.sub("([?<>,.!@#$%&*;:])",repl=r" \1 ",string=sentences)
+    sentences=re.sub("[' ']+",repl=' ',string=sentences)
+    return sentences.strip().split()
+
+#/home/aistudio/snli_1.0/snli_1.0_train.txt
+def load_data(data_path,need_process=True):
 	with open(data_path) as f:
 		lines=f.readlines()
-	print(len(lines))
+	label_sets=["neutral","entailment","contradiction"]
 	sentence_pairs=[]
 	label_list=[]
-	for line in lines:
+	for line in lines[1:]:
 		line_split=line.strip().split("\t")
-		sentence1=[number for number in line_split[0].strip().split()]
-		sentence2=[number for number in line_split[1].strip().split()]
-		sentence_pairs.append((sentence1,sentence2))
-		if len(line_split)==3:
-			label_list.append(int(line_split[-1]))
-	if len(line_split)==3:
-		return sentence_pairs,label_list
-	else:
-		return sentence_pairs
+		label=line_split[0]
+		sentence1=line_split[5]
+		sentence2=line_split[6]
+		if label not in label_sets:
+			continue
+		if need_process:
+			sentence1=process_sentence(sentence1)
+			sentence2=process_sentence(sentence2)
+		else:
+			sentence1=sentence1.strip().split()
+			sentence2=sentence2.strip().split()
 
-# def process_sentence(sentences):
-#     import re
-#     sentences=re.sub("([?<>,.!@#$%&*;:])",repl=" ",string=sentences)
-#     sentences=re.sub("[' ']+",repl=' ',string=sentences)
-#     return sentences.strip().split()
+		sentence_pairs.append((sentence1,sentence2))
+		label_list.append(label)#549367
+	return sentence_pairs,label_list
 
 # def load_data(data_path="../quora_duplicate_questions.tsv",need_process=True):
 #     with open(data_path) as f:
@@ -56,7 +81,7 @@ def load_data(data_path):
 #     return sentence_pairs,label_list
 
 
-def get_parameter(train_sentence_pairs,word2vec_model=None,embed_dim=300):
+def get_parameter(train_sentence_pairs,train_label_list,word2vec_model=None,embed_dim=300):
 	word2id={}
 	all_words=[]
 	for sen_pairs in train_sentence_pairs:
@@ -94,26 +119,35 @@ def get_parameter(train_sentence_pairs,word2vec_model=None,embed_dim=300):
 		for word in words_list:
 			word2id[word]=len(word2id)
 		embedding_matrix=np.random.randn(len(word2id),embed_dim)
-	return word2id,embedding_matrix
+	label_set=set()
+	for label in train_label_list:
+		label_set.add(label)
+	label2id={}
+	for label in list(label_set):
+		label2id[label]=len(label2id)
+	print("label to id is --------->",label2id)
+	return word2id,label2id,embedding_matrix
 
 class Dataset:
-	def __init__(self,sentence_pairs,word2id,mode="train",label_list=None):
+	def __init__(self,sentence_pairs,word2id,label2id,label_list,mode="train"):
 		self.sentence_pairs=sentence_pairs
 		self.mode=mode
-		if self.mode=="train":
-			self.label_list=np.array(label_list)
+		self.label2id=label2id
+		self.label_list_str=label_list
 		self.sample_nums=len(self.sentence_pairs)
 		self.indicator=0
 		self.word2id=word2id
 		self.vocab_size=len(self.word2id)
 		self.PAD_ID=word2id["--PAD--"]
-		#self.max_seq_length=30
+		self.max_seq_length=25
 		self.sentences_pairs_to_id()
 
 	def sentences_pairs_to_id(self):
 		self.sentence1=[]
 		self.sentence2=[]
-		for sen_pairs in self.sentence_pairs:
+		self.label_list=[]
+		assert len(self.sentence_pairs)==len(self.label_list_str)
+		for sen_pairs ,label in zip(self.sentence_pairs,self.label_list_str):
 			sen1,sen2=sen_pairs
 			sen1_id_list=[]
 			sen2_id_list=[]
@@ -123,6 +157,8 @@ class Dataset:
 			for word in sen2:
 				sen2_id_list.append(self.word2id.get(word,self.word2id["--UNK--"]))
 			self.sentence2.append(sen2_id_list)
+			self.label_list.append(self.label2id[label])
+		self.label_list=np.array(self.label_list)
 
 
 
@@ -160,6 +196,7 @@ class Dataset:
 		self.sentence1=np.array(self.sentence1)[shuffle_index]
 		self.sentence2=np.array(self.sentence2)[shuffle_index]
 		self.label_list=self.label_list[shuffle_index]
+		print("Has shuffled the datasets once!")
 
 	def next_batch(self,batch_size):
 		end_indicator=self.indicator+batch_size
@@ -171,10 +208,10 @@ class Dataset:
 		batch_sentence1=self.sentence1[self.indicator:end_indicator]
 		batch_sentence2=self.sentence2[self.indicator:end_indicator]
 		batches_data=self.pad_sentence_pairs(batch_sentence1,batch_sentence2)
-		if self.mode=="train":
+		if self.mode=="train" or self.mode=="valid":
 			batch_label_list=self.label_list[self.indicator:end_indicator]
 		self.indicator+=batch_size
-		if self.mode=="train":
+		if self.mode=="train" or self.mode=="valid":
 			return batches_data,batch_label_list
 		else:
 			return batches_data

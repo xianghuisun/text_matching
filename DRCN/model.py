@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-def get_cosine_distance(v1,v2,cosine_norm=False,epsilon=1e-5):
+def get_cosine_distance(v1,v2,cosine_norm=True,epsilon=1e-5):
     #v1.shape==(batch,seqlen_1,dim),v2.shape==(batch,seqlen_2,dim)
     v1=tf.expand_dims(v1,axis=2)#(batch,seqlen_1,1,dim)
     v2=tf.expand_dims(v2,axis=1)#(batch,1,seqlen_2,dim)
@@ -14,19 +14,20 @@ def get_cosine_distance(v1,v2,cosine_norm=False,epsilon=1e-5):
 class Model:
     def __init__(self,args,embedding_matrix):
         self.hidden_dim=args.hidden_dim#100
-        self.num_classes=args.num_classes#2
+        self.num_classes=args.num_classes
         self.args=args
         self.fc_dim=args.fc_dim#1000
-        embedding_matrix=tf.Variable(embedding_matrix,dtype=tf.float32)
-        random_matrix=tf.Variable(tf.random_normal(shape=[args.embed_size,args.embed_dim],dtype=tf.float32))
-        self.embed_matrix=tf.concat([embedding_matrix,random_matrix],axis=-1)#(vocab_size,600)
+        embedding_matrix=tf.Variable(embedding_matrix,name="embedding_matrix",dtype=tf.float32)
+        #random_matrix=tf.Variable(tf.random_normal(shape=[args.embed_size,args.embed_dim],dtype=tf.float32))
+        #self.embed_matrix=tf.concat([embedding_matrix,random_matrix],axis=-1)#(vocab_size,600)
+        self.embed_matrix=embedding_matrix
         self.add_placeholder()
         self.forward()
     def add_placeholder(self):
         args=self.args
         self.premise = tf.placeholder(name='p', shape=(None, None), dtype=tf.int32)
         self.hypothesis = tf.placeholder(name='h', shape=(None,None), dtype=tf.int32)
-        self.premise_length=tf.placeholder(shape=[None],dtype=tf.int32)
+        self.premise_length=tf.placeholder(name="p_length",shape=[None],dtype=tf.int32)
         self.hypothesis_length=tf.placeholder(shape=[None],dtype=tf.int32)
         self.p_mask=tf.expand_dims(tf.cast(tf.sequence_mask(self.premise_length),
                                            dtype=tf.float32),axis=-1)
@@ -45,7 +46,7 @@ class Model:
         return tf.nn.bidirectional_dynamic_rnn(cell_fw,cell_bw,inputs=x,sequence_length=x_length,dtype=tf.float32)
     def autoencoder_layer(self,x):
         out_dim=int(x.shape[-1])
-        layer1_out=tf.layers.dense(x,units=200,activation=tf.nn.relu)
+        layer1_out=tf.layers.dense(x,units=self.args.autoencoder_dim,activation=tf.nn.tanh)
         output=tf.layers.dense(layer1_out,units=out_dim,activation=tf.nn.tanh)
         return layer1_out,tf.reduce_mean(tf.square(output-x))
     
@@ -54,7 +55,7 @@ class Model:
         h_embed=self.embedding_layer(self.hypothesis)
         p_new=self.dropout_op(p_embed)
         h_new=self.dropout_op(h_embed)
-        self.autoencoder_loss=0.0
+        self.autoencoder_loss=[]
         for i in range(5):
             p_old=p_new
             h_old=h_new
@@ -72,8 +73,9 @@ class Model:
             if i==2 or i==4:
                 p_new,auto_loss_p=self.autoencoder_layer(p_new)
                 h_new,auto_loss_h=self.autoencoder_layer(h_new)
-                self.autoencoder_loss=self.autoencoder_loss+auto_loss_p+auto_loss_h
-                
+                self.autoencoder_loss.append(auto_loss_p)
+                self.autoencoder_loss.append(auto_loss_h)
+        self.autoencoder_loss=tf.reduce_sum(self.autoencoder_loss)
         p_pooling=tf.reduce_max(p_new,axis=1)
         h_pooling=tf.reduce_max(h_new,axis=1)
         interaction=tf.concat(values=[p_pooling,h_pooling,p_pooling+h_pooling,
@@ -86,10 +88,17 @@ class Model:
     def train(self):
         labels=tf.one_hot(self.y,self.num_classes)
         loss=tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits,labels=labels)
-        self.loss=tf.reduce_mean(loss)+self.autoencoder_loss
+        trainable_vars=tf.trainable_variables()
+        l2_regular=[]
+        for v in trainable_vars:
+            if "embedding_matrix" not in v.name:
+                l2_regular.append(self.args.l2_theta*tf.nn.l2_loss(v))
+        l2_regular=tf.reduce_sum(l2_regular)
+
+        self.loss=tf.reduce_mean(loss)+self.autoencoder_loss+l2_regular
         optimizer=tf.train.AdamOptimizer(0.001)
         grads=tf.gradients(self.loss,tf.trainable_variables())
-        grads,_=tf.clip_by_global_norm(grads,5.0)
+        grads,_=tf.clip_by_global_norm(grads,3.0)
         self.train_op=optimizer.apply_gradients(zip(grads,tf.trainable_variables()))
         self.prediction=tf.cast(tf.argmax(tf.nn.softmax(self.logits),axis=-1),dtype=tf.int32)
         self.accuracy=tf.reduce_mean(tf.cast(tf.equal(self.prediction,self.y),dtype=tf.float32))
