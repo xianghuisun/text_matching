@@ -78,8 +78,8 @@ print(label2id)
 
 
 # train_dataset=Dataset(sentence_pairs=train_sentence_pairs,word2id=word2id,mode="train",label_list=train_label_list)
-# test_train_dataset=Dataset(sentence_pairs=test_sentence_pairs,word2id=word2id,mode="test",label_list=None)
-# valid_train_dataset=Dataset(sentence_pairs=valid_sentence_pairs,word2id=word2id,mode="train",label_list=valid_label_list)
+# test_dataset=Dataset(sentence_pairs=test_sentence_pairs,word2id=word2id,mode="test",label_list=None)
+# valid_dataset=Dataset(sentence_pairs=valid_sentence_pairs,word2id=word2id,mode="train",label_list=valid_label_list)
 
 
 class Args:
