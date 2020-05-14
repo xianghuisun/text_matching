@@ -57,7 +57,6 @@ class Args:
 args=Args(vocab_size,seq_length_p=25,seq_length_h=25)
 
 model=Model(embedding_matrix,args.num_classes,args.seq_length_p,args.seq_length_h)
-#model.forward()
 
 def evaluate(sess):
     num_batches=valid_dataset.sample_nums//args.batch_size

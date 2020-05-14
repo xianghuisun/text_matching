@@ -4,31 +4,12 @@ import pandas as pd
 import random
 import pickle
 
-# def load_data(data_path):
-# 	with open(data_path) as f:
-# 		lines=f.readlines()
-# 	print(len(lines))
-# 	sentence_pairs=[]
-# 	label_list=[]
-# 	for line in lines:
-# 		line_split=line.strip().split("\t")
-# 		sentence1=[number for number in line_split[0].strip().split()]
-# 		sentence2=[number for number in line_split[1].strip().split()]
-# 		sentence_pairs.append((sentence1,sentence2))
-# 		if len(line_split)==3:
-# 			label_list.append(line_split[-1])
-# 	if len(line_split)==3:
-# 		return sentence_pairs,label_list
-# 	else:
-# 		return sentence_pairs
-
 def process_sentence(sentences):
     import re
     sentences=re.sub("([?<>,.!@#$%&*;:])",repl=r" \1 ",string=sentences)
     sentences=re.sub("[' ']+",repl=' ',string=sentences)
     return sentences.strip().split()
 
-#/home/aistudio/snli_1.0/snli_1.0_train.txt
 def load_data(data_path,need_process=True):
 	with open(data_path) as f:
 		lines=f.readlines()
@@ -52,7 +33,7 @@ def load_data(data_path,need_process=True):
 		sentence_pairs.append((sentence1,sentence2))
 		label_list.append(label)#549367
 	return sentence_pairs,label_list
-
+#下面这个load_data是处理quora dataset的
 # def load_data(data_path="../quora_duplicate_questions.tsv",need_process=True):
 #     with open(data_path) as f:
 #         lines=f.readlines()
